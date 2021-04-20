@@ -16,7 +16,7 @@ import upickle.default._
 
 object PingActor{
 
-	var cx:Option[Cancellable] = None
+//	var cx:Option[Cancellable] = None
 
 	def apply(wsActor:ActorRef[WebsocketActor.Ping]):Behavior[String] = {
 
@@ -48,15 +48,15 @@ object PingActor{
 
 					println("[PingActor] 'stop' received")
 
-					cx match {
-						case None => {
-							println("[PingActor] 'stop' received, but cx is None")
-						}
-						case Some(cancellable) => {
-							println("[PingActor] 'stop' received, canceling the cancellable")
-							cancellable.cancel();
-						}
-					}
+//					cx match {
+//						case None => {
+//							println("[PingActor] 'stop' received, but cx is None")
+//						}
+//						case Some(cancellable) => {
+//							println("[PingActor] 'stop' received, canceling the cancellable")
+//							cancellable.cancel();
+//						}
+//					}
 				}
 
 				case "confirmed" =>{
@@ -74,7 +74,8 @@ object WebsocketActor {
 
 	sealed trait Command
 	final case class Ping(sender:ActorRef[String]) extends Command
-	final case class WsMessage(wsMsg:String) extends Command
+	case object Start extends Command
+	case object Stop extends Command
 
 	var db: ActorRef[DbActor.Command] =null
 //	var ctx:ActorRef[WebsocketActor.Command] = null
@@ -86,65 +87,23 @@ object WebsocketActor {
 		db = dbActor
 
 		Behaviors.receive( (context, message) => {
-
-//			ctx = context.self
-
 			message match {
 				case Ping(sender) => {
 					// message.sender ! "confirmed"
 					ws ! "[WebsocketActor.Ping] hello? i got a ping"
-
 				}
-
-				case WsMessage(wsMsg) =>{
-					// tell the database what we got off the websocket
+				case Start => {
 					???
-
+				}
+				case Stop => {
+					???
 				}
 			}
-
 			Behaviors.same
 		})
 	}
 
 	def generateSubscribeJson: String = {
-
-		// Request
-		// Subscribe to ETH-USD and ETH-EUR with the level2, heartbeat and ticker channels,
-		// plus receive the ticker entries for ETH-BTC and ETH-USD
-		/*
-			{
-				"type": "subscribe",
-				"product_ids": [
-				"ETH-USD",
-				"ETH-EUR"
-				],
-				"channels": [
-				"level2",
-				"heartbeat",
-				{
-					"name": "ticker",
-					"product_ids": [
-					"ETH-BTC",
-					"ETH-USD"
-					]
-				}
-				]
-			}
-
-		*/
-
-
-
-		// [{"hello":"world","answer":42},true]
-		val output = ujson.Arr(
-			ujson.Obj("hello" -> ujson.Str("world"), "answer" -> ujson.Num(42)),
-			ujson.Bool(true)
-		)
-		println("[generateJson] output: " + ujson.write(output))
-
-
-
 
 		//
 		//		{
@@ -165,24 +124,14 @@ object WebsocketActor {
 		//			}
 		//			]
 		//		}
-		val json2 = ujson.Obj(
+		val subscribeJson = ujson.Obj(
 			"type"->ujson.Str("subscribe"),
 			"product_ids"-> ujson.Arr("BTC-USD"),
-			"channels"-> ujson.Arr("level2","heartbeat")
-		
+			"channels"-> ujson.Arr(/*"level2","heartbeat", */"ticker")
+
 		)
-		println("[generateJson] json2: " + ujson.write(json2))
-
-
-
-
-
-
-
-		val test = ujson.write(json2)
-		test
-
-
+		println("[generateJson] subscribe: " + ujson.write(subscribeJson))
+		ujson.write(subscribeJson)
 
 	}
 
@@ -199,12 +148,12 @@ object WebsocketActor {
 //		val cli:WebsocketClient[String] = WebsocketClient[String]("ws://echo.websocket.org") { wsMessage=>{
 		val cli:WebsocketClient[String] = WebsocketClient[String]("wss://ws-feed-public.sandbox.pro.coinbase.com") { wsMessage=>{
 
-			println(s"[WebsocketClient] websocket text: ${wsMessage}")
+			// println(s"[WebsocketClient] websocket text: ${wsMessage}")
 
 			// persist the message to the database
-			println(s"[WebsocketClient] sending message to db")
-			db ! DbActor.Msg( "[WebsocketActor.WsMessage] received: " + wsMessage)
-			println(s"[WebsocketClient] sent message to db")
+			// println(s"[WebsocketClient] sending message to db")
+			db ! DbActor.Msg(wsMessage)
+			// println(s"[WebsocketClient] sent message to db")
 		}}
 		val ws = cli.open()
 
@@ -220,8 +169,8 @@ object WebsocketActor {
 object MainActor {
 
 	trait Command
-	final case class SayHello(message_text:String) extends Command
-	final case class ShutItAllDown() extends Command
+	object Start extends Command
+	object ShutItAllDown extends Command
 
 	// the type of message to be handled is declared to be of type SayHello
 	// which means the message argument has the same type
@@ -232,7 +181,8 @@ object MainActor {
 		Behaviors.setup({ context =>
 			println("[MainActor.apply]")
 
-			val dbActor = context.spawn(swimr.DbActor(), "dbActor")
+			val currentPriceActor = context.spawn(CurrentPriceActor(), "currentPriceActor")
+			val dbActor = context.spawn(swimr.DbActor(currentPriceActor), "dbActor")
 			val wsActor = context.spawn(WebsocketActor(dbActor), "wsActor")
 			val pingActor = context.spawn(PingActor(wsActor), "pinger")
 
@@ -241,13 +191,15 @@ object MainActor {
 			Behaviors.receiveMessage(message => {
 
 				message match {
-					case m:SayHello =>
+					case Start =>
 						println("[MainActor] sending 'start' to PingActor")
 						// "the next behavior is the same as the current one"
-						pingActor ! "start"
+						currentPriceActor ! CurrentPriceActor.Start
+//						pingActor ! "start"
 
-					case m:ShutItAllDown => {
-						pingActor ! "stop" // already
+					case ShutItAllDown => {
+//						pingActor ! "stop" // already
+						currentPriceActor ! CurrentPriceActor.Stop
 					}
 				}
 
@@ -259,12 +211,11 @@ object MainActor {
 
 object Main extends App {
 
-	val myActorMain:ActorSystem[MainActor.Command] = ActorSystem(MainActor(),"MyActorTest")
+	val myActorMain:ActorSystem[MainActor.Command] = ActorSystem(MainActor(),"MainActor")
 
-	myActorMain ! MainActor.SayHello("[Main] this is a message from Main to MainActor")
-
-	 Thread.sleep(10000)
-	 myActorMain ! MainActor.ShutItAllDown()
+	myActorMain ! MainActor.Start
+	Thread.sleep(300000)
+	myActorMain ! MainActor.ShutItAllDown
 
 
 }
