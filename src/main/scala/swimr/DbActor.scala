@@ -1,137 +1,192 @@
 package swimr
 
-import akka.actor.Cancellable
-import akka.actor.typed.{ActorRef, Behavior}
+import akka.actor.typed.{ActorRef, Behavior, PostStop, PreRestart, SupervisorStrategy}
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
+import io.getquill.{LowerCase, PostgresJdbcContext}
+import org.postgresql.ds.PGSimpleDataSource
+import swimr.Model.Ticker
+
 
 object DbActor {
 	sealed trait Command
-	case object Start extends Command
+
 	case object Stop extends Command
 	final case class Msg(m:String) extends Command
+	final case class YouThere(parent:ActorRef[MainActor.Command]) extends Command
+	object ConnectToPostgres extends Command
 
-	var count = 0
+	var currentPriceActor: ActorRef[CurrentPriceActor.Command] = null
+	var dbContext:Option[PostgresJdbcContext[LowerCase.type]] = None
 
-	def apply(currentPriceActor: ActorRef[CurrentPriceActor.Command]):Behavior[Command] = {
+
+	def apply(currPriceActor: ActorRef[CurrentPriceActor.Command]):Behavior[Command] = {
+
 		println("[DbActor:apply]")
 
-		Behaviors.receive{ (context, cmd:Command) => {
-			cmd match {
+		currentPriceActor = currPriceActor
 
-				case Start|Stop => {
-					println("[DbActor] starting/stopping")
+		val behavior = setupBehavior
+		val behavior2 = Behaviors.supervise(behavior).onFailure(akka.actor.typed.SupervisorStrategy.restart)
 
-				}
 
-				case Msg(jsonStr) => {
-					//println(s"[DbActor] received: ${m}, context: ${context}")
-					//println("[DbActor] starting long db action " + count)
-					//Thread.sleep(500)
-					//println("[DbActor] done with long db action " + count)
-					// count+=1
+		behavior2
 
-					parseJsonTicker(jsonStr) match {
-						case Some(price) => {
-							currentPriceActor ! CurrentPriceActor.Update(price)
+	}
 
+	def setupBehavior:Behavior[Command] = {
+
+		Behaviors.supervise[DbActor.Command] {
+			Behaviors.receive((context: ActorContext[DbActor.Command], msg: DbActor.Command) => {
+
+
+
+				msg match {
+
+					case ConnectToPostgres => {
+						dbMonitor(context)
+						Behaviors.same
+					}
+
+					case YouThere(parent) => {
+						println("[DbActor] Yeah, I'm here.")
+						parent ! MainActor.DbStarted
+						Behaviors.same
+					}
+
+					case Msg(jsonStr) => {
+
+						dbContext match {
+							case None => println("[DbActor] Json rcvd. Db not started.")
+							case Some(dbContext) => {
+								// process JSON, send to priceActor
+								// TODO: make priceActor independent of this actor
+
+								// println("[DbActor] rcvd: " + jsonStr)
+								val ticker = parseJsonTicker (jsonStr)
+								ticker match {
+									case Some (t: Ticker) => currentPriceActor ! CurrentPriceActor.Update (t)
+									case None => { }
+								}
+							}
 						}
-						case None => { }
+
+						Behaviors.same
 					}
 
 
+					case Stop => {
+						???
+
+					}
 				}
-			}
-			Behaviors.same
-		}}
+			})
+
+			// restart the child
+		}.onFailure(SupervisorStrategy.restart.withStopChildren(false))
+//		.receiveSignal{
+//			case (_, signal) if signal == PreRestart || signal == PostStop =>
+//				println("[DbActor] received signal: " + signal)
+//				Behaviors.same
+//		}
 	}
 
-	def parseJsonTicker(jsonStr:String):Option[String] = {
+	def dbConnect: (Option[PostgresJdbcContext[LowerCase.type]]) ={
+		// "let it fail"
+		try{
+			import io.getquill._
+			// TODO: changed to pooled?
+			val pgDatasource = new PGSimpleDataSource
+			pgDatasource.setUrl("jdbc:postgresql://10.1.1.205/coin")
+			pgDatasource.setPortNumbers(Array(54320))
+			pgDatasource.setUser("postgres")
+			import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
+			val config = new HikariConfig()
+			config.setDataSource(pgDatasource)
 
-		val jsonVal = ujson.read(jsonStr)
 
+			val ctx = new PostgresJdbcContext(LowerCase, new HikariDataSource(config))
+			import ctx._
+			Some(ctx)
 
-		// println(s"[parseJsonTicker] coinbaseType: " + jsonVal.obj("type"))
+		} catch {
+			case e:Throwable => {
+				println("[DbActor:dbConnect] throwable: " + e)
+				None
 
-		try {
-			val typ = jsonVal.obj("type");
-			typ.str match {
-				case "ticker" => {
-					val price = jsonVal.obj("price").str
-					// println(s"[parseJsonTicker] price: " + price)
-					Some(price)
-				}
-				case _ => None
 			}
-		} catch  {
-			// case e:Throwable => None
-			case _:Throwable => None
 		}
 	}
-}
 
-object CurrentPriceActor {
-	sealed trait Command
-	final case class Update(m:String) extends Command
-	final object Start extends Command
-	final object Stop extends Command
+	def dbMonitor(context: ActorContext[DbActor.Command]) = {
 
+		// routinely check if db is alive; try again if it's not, do nothing if it is
 
-	var cx:Option[Cancellable] = None
-
-	var currentPrice:String = ""
-
-	def apply():Behavior[Command] = {
-		println("[CurrentPriceActor:apply]")
-
-		Behaviors.receive{ (context, cmd:Command) => {
-			cmd match {
-				case Update(m) => {
-
-					currentPrice = m
-
-				}
-
-				case Start => {
-					startPriceWatcher(context)
-				}
-
-				case Stop =>{
-					cx match {
-						case None => {
-							println("[CurrentPriceActor] 'stop' received, but cx is None")
-						}
-						case Some(cancellable) => {
-							println("[CurrentPriceActor] 'stop' received, canceling the cancellable")
-							cancellable.cancel();
-						}
-					}
-				}
-
-			}
-			Behaviors.same
-		}}
-	}
-
-
-	def startPriceWatcher(context: ActorContext[Command]) = {
-		import scala.concurrent.ExecutionContext.Implicits.global
+		// timer
+		// import scala.concurrent.ExecutionContext.Implicits.global
+		implicit val ec: scala.concurrent.ExecutionContext = scala.concurrent.ExecutionContext.global
 		import scala.concurrent.duration.FiniteDuration
 		import scala.concurrent.duration.MILLISECONDS
 
-		cx = Some(context.system.scheduler.scheduleWithFixedDelay(
+		val cx = Some(context.system.scheduler.scheduleWithFixedDelay(
 			FiniteDuration(0,MILLISECONDS),
-			FiniteDuration(10,MILLISECONDS))(
+			FiniteDuration(10000,MILLISECONDS))(
 				new Runnable(){ def run() = {
+					//printf("\r[CurrentPriceActor] current: $%s", currentPrice)
 
-					printf("\r[CurrentPriceActor] current: $%s", currentPrice)
-					//wsActor ! WebsocketActor.Ping(context.self)
+
+
+					dbContext match {
+						case None => {
+							println("[DbActor.dbMonitor] dbContext before connect: " + dbContext )
+							// TODO: attempt restart
+							dbContext = dbConnect
+							println("[DbActor.dbMonitor] dbContext after connect: " + dbContext )
+						}
+
+						case Some(dbCtx) => {
+							println("[DbActor.dbMonitor] dbContext: " + dbContext )
+						}
+
+
+
+					}
+
 				}
 			})
 		)
 	}
 
+	def parseJsonTicker(jsonStr:String):Option[Ticker] = {
+		// println("[DbActor:parseJsonTicker] jsonStr: " + jsonStr)
+		val jsonVal = ujson.read(jsonStr)
+		// println("[DbActor:parseJsonTicker] jsonVal: " + jsonVal)
+		try {
+			val typ:String = jsonVal.obj("type").str;
+			// println("[DbActor:parseJsonTicker] typ: " + typ)
+			typ match {
 
+				case "ticker" =>
+					println("[DbActor:parseJsonTicker] ticker: " + jsonVal)
+					implicit val tickerRW = upickle.default.macroRW[Ticker]
+					val ticker = upickle.default.read[Ticker](jsonVal)
+					println("[DbActor:parseJsonTicker] ticker: " + ticker)
+					val price = jsonVal.obj("price").str
+					// println(s"[DbActor:parseJsonTicker] price: " + price)
+					//Some(price)
+					Some(ticker)
 
+				case _ =>
+					println("[DbActor:parseJsonTicker] NONE: " + jsonVal.str)
+					None
 
-
+			}
+		} catch  {
+			// case e:Throwable => None
+			case e:Throwable => {
+				println("[DbActor:parseJsonTicker] throwable: " + e)
+				None
+			}
+		}
+	}
 }
+

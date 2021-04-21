@@ -26,7 +26,11 @@ libraryDependencies ++= Seq(
 
 	// json
 	// https://www.lihaoyi.com/post/HowtoworkwithJSONinScala.html
-	"com.lihaoyi" %% "upickle" % "1.3.11"
+	"com.lihaoyi" %% "upickle" % "1.3.11",
+
+	"org.postgresql" % "postgresql" % "42.2.19",
+
+	"io.getquill" %% "quill-jdbc" % "3.7.0"
 
 
 
