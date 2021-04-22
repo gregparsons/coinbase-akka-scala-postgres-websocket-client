@@ -13,6 +13,7 @@ object CurrentPriceActor {
 
 	var cx:Option[Cancellable] = None
 	var currentPrice:String = ""
+	var currentTicker:Option[Ticker] = None
 
 	def apply():Behavior[Command] = {
 
@@ -26,6 +27,7 @@ object CurrentPriceActor {
 		Behaviors.receive ((context:ActorContext[CurrentPriceActor.Command], cmd:CurrentPriceActor.Command) => {
 			cmd match {
 				case Update(t) => {
+					currentTicker = Some(t)
 					currentPrice = t.price
 					Behaviors.same
 				}
@@ -61,10 +63,16 @@ object CurrentPriceActor {
 
 		cx = Some(context.system.scheduler.scheduleWithFixedDelay(
 			FiniteDuration(0,MILLISECONDS),
-			FiniteDuration(10000,MILLISECONDS))(
+			FiniteDuration(10,MILLISECONDS))(
 			new Runnable(){ def run() = {
 				//					printf("\r[CurrentPriceActor] current: $%s", currentPrice)
-				println("[CurrentPriceActor] current: $" + currentPrice)
+//				println("[CurrentPriceActor] current: $" + currentPrice)
+				currentTicker match {
+					case Some(t) =>
+//						printf("\r[CurrentPriceActor] ticker: $%s", t)
+						println("[CurrentPriceActor] ticker: " + t)
+					case _ => { }
+				}
 
 			}
 			})

@@ -24,13 +24,11 @@ object MainActor {
 
 	// var currentPriceActor:ActorRef[CurrentPriceActor.Command] = null
 	// var dbActor:ActorRef[DbActor.Command] = null
-	var wsActor:ActorRef[WsActor.Command] = null
+	// var wsActor:ActorRef[WsActor.Command] = null
 
 	def apply(): Behavior[Command] = {
 		println("[MainActor::apply] MainActor alive")
-
 		setupBehavior
-
 	}
 
 	def setupBehavior:Behavior[Command] = {
@@ -43,15 +41,18 @@ object MainActor {
 
 				val currentPriceActor = ctx.spawn(CurrentPriceActor(), "currentPriceActor")
 				val dbActor = ctx.spawn(swimr.DbActor(currentPriceActor), "dbActor")
+				val wsActor = ctx.spawn(WsActor(dbActor), "wsActor")
 
 				Behaviors.receiveMessage[Command] {
 
 					case Start =>
+
 						println("[MainActor] Start command received.")
 						currentPriceActor ! CurrentPriceActor.Start
+
 						dbActor ! DbActor.YouThere(context.self)
 						dbActor ! DbActor.ConnectToPostgres
-						wsActor = ctx.spawn(WsActor(dbActor), "wsActor")
+
 						wsActor ! WsActor.YouThere(context.self)
 						Behaviors.same
 
