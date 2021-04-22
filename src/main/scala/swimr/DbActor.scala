@@ -59,18 +59,7 @@ object DbActor {
 								// println("[DbActor] rcvd: " + jsonStr)
 								val coinbaseMsg = parseJson (jsonStr)
 								coinbaseMsg match {
-									case Some (t: Ticker) => {
-										insertTicker(t)
-										currentPriceActor ! CurrentPriceActor.Update (t)
-									}
-
-									case Some(s:Snapshot) => {
-										???
-									}
-
-									case Some(l:L2update) => {
-										???
-									}
+									case Some (cb: Coinbase) => insertInto(cb)
 
 									case None => { }
 								}
@@ -117,34 +106,31 @@ object DbActor {
 			case "snapshot" => {
 //				println("[DbActor:parseJson] snapshot: " + jsonVal)
 				val product_id = jsonVal.obj("product_id").str
-				val bids:ArrayBuffer[ujson.Value] = jsonVal.obj("bids").arr
+				val bids:Array[(String, String)] = jsonVal.obj("bids").arr.map(v => {
+					(v(0).str, v(1).str)
 
+				}).toArray
 
+				val asks = jsonVal.obj("asks").arr.map(v => {
+					(v(0).str, v(1).str)
+				}).toArray
 
-				val arrayOfBids = bids.map(v => {
-					(v(0), v(1))
+				val snapshot = Snapshot(product_id, bids, asks)
+				Some(snapshot)
 
-				})
-
-				arrayOfBids foreach (println)
-
-				val asks:ArrayBuffer[ujson.Value] = jsonVal.obj("asks").arr
-
-//				implicit val snapshotRw = upickle.default.macroRW[Snapshot]
-//				val snapshot = upickle.default.read[Snapshot](jsonVal)
-//				Some(snapshot)
-				None
 			}
 
 			case "l2update" => {
 //				println("[DbActor:parseJson] l2update: " + jsonVal)
 				val time = jsonVal.obj("time").str
 				val product_id = jsonVal.obj("product_id").str
-				val changes = jsonVal.obj("changes").arr
-//				implicit val l2updateRw = upickle.default.macroRW[L2update]
-//				val l2update: L2update = upickle.default.read[L2update](jsonVal)
-//				Some(l2update)
-				None
+				val changes = jsonVal.obj("changes").arr.map(v => {
+					(v(0).str, v(1).str, v(2).str)
+				}).toArray
+				changes foreach (println)
+
+				val l2update = L2update(product_id, time, changes)
+				Some(l2update)
 			}
 
 			case "subscriptions"  => {
@@ -170,7 +156,7 @@ object DbActor {
 		//		}
 	}
 
-	def insertTicker(cb:Coinbase) = {
+	def insertInto(cb:Coinbase) = {
 
 		conn match {
 
@@ -199,6 +185,16 @@ object DbActor {
 						val stmt = c.prepareStatement(sql)
 						val result = stmt.execute()
 						// println("[insertTicker] sql insert result: " + result)
+
+					}
+
+					case s:Snapshot => {
+						// TODO: do we really want to save these?
+					}
+
+					case u:L2update => {
+						// TODO: do we need to reference when the baseline started?
+						
 
 					}
 
