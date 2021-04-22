@@ -39,7 +39,7 @@ object MainActor {
 
 				ctx = context
 
-				val currentPriceActor = ctx.spawn(CurrentPriceActor(), "currentPriceActor")
+				val currentPriceActor = ctx.spawn(BookActor(), "currentPriceActor")
 				val dbActor = ctx.spawn(swimr.DbActor(currentPriceActor), "dbActor")
 				val wsActor = ctx.spawn(WsActor(dbActor), "wsActor")
 
@@ -48,7 +48,7 @@ object MainActor {
 					case Start =>
 
 						println("[MainActor] Start command received.")
-						currentPriceActor ! CurrentPriceActor.Start
+						currentPriceActor ! BookActor.Start
 
 						dbActor ! DbActor.YouThere(context.self)
 						dbActor ! DbActor.ConnectToPostgres
@@ -74,7 +74,7 @@ object MainActor {
 						Behaviors.same
 
 					case ShutItAllDown =>
-						currentPriceActor ! CurrentPriceActor.Stop
+						currentPriceActor ! BookActor.Stop
 						Behaviors.stopped
 
 				}.receiveSignal {

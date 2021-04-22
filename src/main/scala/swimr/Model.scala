@@ -19,7 +19,7 @@ object Model {
 
 	) extends Coinbase
 
-	case class Snapshot ( product_id:String, bids:Array[(String, String)], asks: Array[(String, String)]) extends Coinbase
+	case class L2snapshot(product_id:String, bids:Array[(String, String)], asks: Array[(String, String)]) extends Coinbase
 
 	case class L2update (product_id:String, time:String, changes:Array[(String, String, String)]) extends Coinbase
 

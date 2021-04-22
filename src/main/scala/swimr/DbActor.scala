@@ -5,7 +5,7 @@ import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
 import io.getquill.ast.Value
 import io.getquill.{LowerCase, PostgresJdbcContext}
 import org.postgresql.ds.PGSimpleDataSource
-import swimr.Model.{Coinbase, L2update, Snapshot, Ticker}
+import swimr.Model.{Coinbase, L2update, L2snapshot, Ticker}
 import upickle.default
 
 import scala.collection.mutable.ArrayBuffer
@@ -15,17 +15,17 @@ object DbActor {
 	sealed trait Command
 
 	case object Stop extends Command
-	final case class Msg(m:String) extends Command
+	final case class WebsocketText(m:String) extends Command
 	final case class YouThere(parent:ActorRef[MainActor.Command]) extends Command
 	object ConnectToPostgres extends Command
 
-	var currentPriceActor: ActorRef[CurrentPriceActor.Command] = null
+	var lclBookActor: ActorRef[BookActor.Command] = null
 //	var conn:Option[PostgresJdbcContext[LowerCase.type]] = None
 	var conn:Option[java.sql.Connection] = None
 
-	def apply(currPriceActor: ActorRef[CurrentPriceActor.Command]):Behavior[Command] = {
+	def apply(localBookActor: ActorRef[BookActor.Command]):Behavior[Command] = {
 		println("[DbActor:apply]")
-		currentPriceActor = currPriceActor
+		lclBookActor = localBookActor
 		val behavior = setupBehavior
 		val behavior2 = Behaviors.supervise(behavior).onFailure(akka.actor.typed.SupervisorStrategy.restart)
 		behavior2
@@ -49,19 +49,32 @@ object DbActor {
 						Behaviors.same
 					}
 
-					case Msg(jsonStr) => {
+					case WebsocketText(json) => {
 						conn match {
 							case None => println("[DbActor] Json rcvd. Db not started.")
 							case Some(conn) => {
-								// process JSON, send to priceActor
-								// TODO: make priceActor independent of this actor
 
-								// println("[DbActor] rcvd: " + jsonStr)
-								val coinbaseMsg = parseJson (jsonStr)
+
+								// 1. Turn the raw JSON into a Model.* coinbase object
+
+								val coinbaseMsg:Option[Model.Coinbase] = parseJson(json)
+
+								// 2. Put the coinbase object into the database or persist to the in-memory book
+
 								coinbaseMsg match {
-									case Some (cb: Coinbase) => insertInto(cb)
+									case Some (cb: Coinbase) =>
+
+										// TODO: this sends a copy of every coinbase message to both places; probably fine
+										// might be duplicating resources
+
+										// Send to in-memory store
+										lclBookActor ! BookActor.CoinbaseMsg(cb)
+
+										// Save to Postgres
+										persistToPostgres(cb)
 
 									case None => { }
+
 								}
 							}
 						}
@@ -73,8 +86,7 @@ object DbActor {
 					}
 				}
 			})
-
-			// restart the child
+			// restart the child:
 		}.onFailure(SupervisorStrategy.restart.withStopChildren(false))
 //		.receiveSignal{
 //			case (_, signal) if signal == PreRestart || signal == PostStop =>
@@ -115,7 +127,7 @@ object DbActor {
 					(v(0).str, v(1).str)
 				}).toArray
 
-				val snapshot = Snapshot(product_id, bids, asks)
+				val snapshot = L2snapshot(product_id, bids, asks)
 				Some(snapshot)
 
 			}
@@ -127,7 +139,7 @@ object DbActor {
 				val changes = jsonVal.obj("changes").arr.map(v => {
 					(v(0).str, v(1).str, v(2).str)
 				}).toArray
-				changes foreach (println)
+				// changes foreach (println)
 
 				val l2update = L2update(product_id, time, changes)
 				Some(l2update)
@@ -138,7 +150,7 @@ object DbActor {
 				None
 			}
 			case "heartbeat" => {
-				println("[DbActor:parseJson] heartbeat: " + jsonVal)
+				// println("[DbActor:parseJson] heartbeat: " + jsonVal)
 				None
 			}
 
@@ -156,7 +168,11 @@ object DbActor {
 		//		}
 	}
 
-	def insertInto(cb:Coinbase) = {
+	/**
+	 * Put the coinbase object in the database
+	 * @param cb
+	 */
+	def persistToPostgres(cb:Coinbase) = {
 
 		conn match {
 
@@ -165,9 +181,9 @@ object DbActor {
 				cb match {
 
 					case t: Ticker => {
+
 						//insert into t_cb_ticker(dtg, sequence, product_id, price, best_bid, best_ask, side, trade_id, last_size)
 						//VALUES ('2021-04-21T21:21:52.314651Z',24019611415, 'BTC-USD', 54849.51,54849.51,54849.51,'buy',158978547,'0.00436093')
-
 
 						val sql = s"insert into t_cb_ticker" +
 							s"(dtg, sequence, product_id, price, best_bid, best_ask, side, trade_id, last_size) " +
@@ -188,13 +204,12 @@ object DbActor {
 
 					}
 
-					case s:Snapshot => {
+					case s:L2snapshot => {
 						// TODO: do we really want to save these?
 					}
 
 					case u:L2update => {
 						// TODO: do we need to reference when the baseline started?
-						
 
 					}
 
@@ -207,7 +222,6 @@ object DbActor {
 
 		}
 	}
-
 
 	def dbConnect: (Option[java.sql.Connection]) ={
 

@@ -54,9 +54,6 @@ object WsActor {
 
 	def startSimpleWebsocket: Option[Websocket] = {
 
-
-
-
 		try{
 			val jsonSubscribe = generateSubscribeJson
 //			maxFramePayloadLength = 2521440
@@ -74,7 +71,7 @@ object WsActor {
 //
 					case str =>
 						timeOfLast = System.currentTimeMillis
-						db ! DbActor.Msg(str)
+						db ! DbActor.WebsocketText(str)
 				}
 			}
 
