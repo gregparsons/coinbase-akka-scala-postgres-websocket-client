@@ -63,7 +63,7 @@ object CurrentPriceActor {
 
 		cx = Some(context.system.scheduler.scheduleWithFixedDelay(
 			FiniteDuration(0,MILLISECONDS),
-			FiniteDuration(10,MILLISECONDS))(
+			FiniteDuration(10000,MILLISECONDS))(
 			new Runnable(){ def run() = {
 				//					printf("\r[CurrentPriceActor] current: $%s", currentPrice)
 //				println("[CurrentPriceActor] current: $" + currentPrice)

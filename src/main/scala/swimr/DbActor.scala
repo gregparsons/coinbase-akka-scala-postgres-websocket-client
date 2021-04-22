@@ -2,10 +2,13 @@ package swimr
 
 import akka.actor.typed.{ActorRef, Behavior, PostStop, PreRestart, SupervisorStrategy}
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
+import io.getquill.ast.Value
 import io.getquill.{LowerCase, PostgresJdbcContext}
 import org.postgresql.ds.PGSimpleDataSource
 import swimr.Model.{Coinbase, L2update, Snapshot, Ticker}
 import upickle.default
+
+import scala.collection.mutable.ArrayBuffer
 
 
 object DbActor {
@@ -91,41 +94,124 @@ object DbActor {
 //		}
 	}
 
+	def parseJson(jsonStr:String):Option[Coinbase] = {
+//		println("[DbActor:parseJson] jsonStr: " + jsonStr)
+		val jsonVal = ujson.read(jsonStr)
+		// println("[DbActor:parseJson] jsonVal: " + jsonVal)
+		//		try {
+		val typ:String = jsonVal.obj("type").str;
+		typ match {
+			case "ticker" =>
+				val time = jsonVal.obj("time").str
+				val sequence = jsonVal.obj("sequence").num.toLong
+				val product_id = jsonVal.obj("product_id").str
+				val price = jsonVal.obj("price").str
+				val best_bid = jsonVal.obj("best_bid").str
+				val best_ask = jsonVal.obj("best_ask").str
+				val side = jsonVal.obj("side").str
+				val trade_id = jsonVal.obj("trade_id").num.toLong
+				val last_size = jsonVal.obj("last_size").str
+				val ticker = new Ticker(sequence = sequence, product_id = product_id, price = price, best_bid = best_bid, best_ask=best_ask, side=side, time=time, trade_id=trade_id, last_size =last_size )
+				Some(ticker)
 
-	def insertTicker(t:Ticker) = {
+			case "snapshot" => {
+//				println("[DbActor:parseJson] snapshot: " + jsonVal)
+				val product_id = jsonVal.obj("product_id").str
+				val bids:ArrayBuffer[ujson.Value] = jsonVal.obj("bids").arr
+
+
+
+				val arrayOfBids = bids.map(v => {
+					(v(0), v(1))
+
+				})
+
+				arrayOfBids foreach (println)
+
+				val asks:ArrayBuffer[ujson.Value] = jsonVal.obj("asks").arr
+
+//				implicit val snapshotRw = upickle.default.macroRW[Snapshot]
+//				val snapshot = upickle.default.read[Snapshot](jsonVal)
+//				Some(snapshot)
+				None
+			}
+
+			case "l2update" => {
+//				println("[DbActor:parseJson] l2update: " + jsonVal)
+				val time = jsonVal.obj("time").str
+				val product_id = jsonVal.obj("product_id").str
+				val changes = jsonVal.obj("changes").arr
+//				implicit val l2updateRw = upickle.default.macroRW[L2update]
+//				val l2update: L2update = upickle.default.read[L2update](jsonVal)
+//				Some(l2update)
+				None
+			}
+
+			case "subscriptions"  => {
+				println("[DbActor:parseJson] subscription: " + jsonVal)
+				None
+			}
+			case "heartbeat" => {
+				println("[DbActor:parseJson] heartbeat: " + jsonVal)
+				None
+			}
+
+			case _ =>
+				println("[DbActor:parseJson] NONE: " + jsonVal)
+				None
+
+		}
+		//		} catch  {
+		//			// case e:Throwable => None
+		//			case e:Throwable => {
+		//				println("[DbActor:parseJson] throwable: " + e)
+		//				None
+		//			}
+		//		}
+	}
+
+	def insertTicker(cb:Coinbase) = {
 
 		conn match {
 
 			case Some(c) => {
 
-				//insert into t_cb_ticker(dtg, sequence, product_id, price, best_bid, best_ask, side, trade_id, last_size)
-				//VALUES ('2021-04-21T21:21:52.314651Z',24019611415, 'BTC-USD', 54849.51,54849.51,54849.51,'buy',158978547,'0.00436093')
+				cb match {
+
+					case t: Ticker => {
+						//insert into t_cb_ticker(dtg, sequence, product_id, price, best_bid, best_ask, side, trade_id, last_size)
+						//VALUES ('2021-04-21T21:21:52.314651Z',24019611415, 'BTC-USD', 54849.51,54849.51,54849.51,'buy',158978547,'0.00436093')
 
 
+						val sql = s"insert into t_cb_ticker" +
+							s"(dtg, sequence, product_id, price, best_bid, best_ask, side, trade_id, last_size) " +
+							s"VALUES " +
+							s"('${t.time}'," +
+							s"${t.sequence}, " +
+							s"'${t.product_id}', " +
+							s"'${t.price}'," +
+							s"'${t.best_bid}'," +
+							s"'${t.best_ask}'," +
+							s"'${t.side}'," +
+							s"${t.trade_id}," +
+							s"'${t.last_size}')"
 
-				val sql = s"insert into t_cb_ticker" +
-					s"(dtg, sequence, product_id, price, best_bid, best_ask, side, trade_id, last_size) " +
-					s"VALUES " +
-					s"('${t.time}'," +
-					s"${t.sequence}, " +
-					s"'${t.product_id}', " +
-					s"'${t.price}'," +
-					s"'${t.best_bid}'," +
-					s"'${t.best_ask}'," +
-					s"'${t.side}'," +
-					s"${t.trade_id}," +
-					s"'${t.last_size}')"
+						val stmt = c.prepareStatement(sql)
+						val result = stmt.execute()
+						// println("[insertTicker] sql insert result: " + result)
 
-				val stmt = c.prepareStatement(sql)
-				val result = stmt.execute()
-				// println("[insertTicker] sql insert result: " + result)
+					}
 
+					case _ => {}
+				}
 			}
-			case None => {
+
+			case None =>
 				println("[insertTicker] conn is None, can't insert")
-			}
+
 		}
 	}
+
 
 	def dbConnect: (Option[java.sql.Connection]) ={
 
@@ -178,69 +264,5 @@ object DbActor {
 		)
 	}
 
-	def parseJson(jsonStr:String):Option[Coinbase] = {
-		println("[DbActor:parseJson] jsonStr: " + jsonStr)
-		val jsonVal = ujson.read(jsonStr)
-		// println("[DbActor:parseJson] jsonVal: " + jsonVal)
-//		try {
-			val typ:String = jsonVal.obj("type").str;
-			// println("[DbActor:parseJson] typ: " + typ)
-			typ match {
-				case "ticker" =>
-//					println("[DbActor:parseJson] ticker: " + jsonVal)
-					//implicit val tickerRW: default.ReadWriter[Ticker] = upickle.default.macroRW[Ticker]
-					//val ticker:Model.Ticker = upickle.default.read[Ticker](jsonVal)
-					val time = jsonVal.obj("time").str
-					val sequence = jsonVal.obj("sequence").num.toLong
-					val product_id = jsonVal.obj("product_id").str
-					val price = jsonVal.obj("price").str
-					val best_bid = jsonVal.obj("best_bid").str
-					val best_ask = jsonVal.obj("best_ask").str
-					val side = jsonVal.obj("side").str
-					val trade_id = jsonVal.obj("trade_id").num.toLong
-					val last_size = jsonVal.obj("side").str
-
-					val ticker = new Ticker(sequence = sequence, product_id = product_id, price = price, best_bid = best_bid, best_ask=best_ask, side="", time=time, trade_id=trade_id, last_size =last_size )
-
-
-					println("[DbActor:parseJson] ticker: " + ticker)
-					// val price = jsonVal.obj("price").str
-					// println(s"[DbActor:parseJson] price: " + price)
-					//Some(price)
-					Some(ticker)
-//					None
-
-//				case "snapshot" => {
-//					println("[DbActor:parseJson] snapshot: " + jsonVal)
-//					implicit val snapshotRw = upickle.default.macroRW[Snapshot]
-//					val snapshot = upickle.default.read[Snapshot](jsonVal)
-//					Some(snapshot)
-//				}
-//
-//				case "l2update" => {
-//					println("[DbActor:parseJson] l2update: " + jsonVal)
-//					implicit val l2updateRw = upickle.default.macroRW[L2update]
-//					val l2update: L2update = upickle.default.read[L2update](jsonVal)
-//					Some(l2update)
-//				}
-
-				case "subscriptions" | "heartbeat" => {
-					println("[DbActor:parseJson] subscription or heartbeat: " + jsonVal)
-					None
-				}
-
-				case _ =>
-					println("[DbActor:parseJson] NONE: " + jsonVal)
-					None
-
-			}
-//		} catch  {
-//			// case e:Throwable => None
-//			case e:Throwable => {
-//				println("[DbActor:parseJson] throwable: " + e)
-//				None
-//			}
-//		}
-	}
 }
 

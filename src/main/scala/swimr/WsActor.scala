@@ -3,6 +3,7 @@ package swimr
 import akka.actor.typed.{ActorRef, Behavior}
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
 import com.github.andyglow.websocket._
+import com.github.andyglow.websocket.util.Uri
 
 import java.util.Calendar
 
@@ -52,26 +53,56 @@ object WsActor {
 	}
 
 	def startSimpleWebsocket: Option[Websocket] = {
+
+
+
+
 		try{
 			val jsonSubscribe = generateSubscribeJson
-			val client = {
-				val builder = WebsocketClient.Builder[String](COINBASE_URL) { wsMessage => {
-					// println("[startSimpleWebsocket] rcvd: " + wsMessage)
+//			maxFramePayloadLength = 2521440
 
-					timeOfLast = System.currentTimeMillis
-
-					db ! DbActor.Msg(wsMessage)
-					}
-				} onFailure {
-					case ex: Throwable  =>
-						println(s"[startSimpleWebsocket] Error occurred.", ex)
-						ws = None
-				} onClose {
-					println(s"[startSimpleWebsocket] connection closed");
-					ws = None
+			val protocolHandler = new WebsocketHandler[String]() {
+				def receive = {
+//					case str if str startsWith "repeat " =>
+//						sender() ! "repeating " + str.substring(7)
+//						logger.info(s"<<| $str")
+//
+//					case str if str endsWith "close" =>
+//						logger.info(s"<<! $str")
+//						sender().close
+//						semaphore.release()
+//
+					case str =>
+						timeOfLast = System.currentTimeMillis
+						db ! DbActor.Msg(str)
 				}
-				builder.build()
 			}
+
+			// https://github.com/andyglow/websocket-scala-client/blob/master/src/main/scala/com/github/andyglow/websocket/WebsocketClient.scala
+			val client = WebsocketClient(uri = Uri(COINBASE_URL), handler = protocolHandler, maxFramePayloadLength = 2521440)
+
+
+				//var options = WebsocketClient.Builder.Options(maxFramePayloadLength = 2621440)
+
+
+//				var builder = WebsocketClient.Builder[String](COINBASE_URL) {
+//					wsMessage => {
+//						// println("[startSimpleWebsocket] rcvd: " + wsMessage)
+//						timeOfLast = System.currentTimeMillis
+//						db ! DbActor.Msg(wsMessage)
+//					}
+//				} onFailure {
+//					case ex: Throwable  =>
+//						println(s"[startSimpleWebsocket] Error occurred.", ex)
+//						ws = None
+//				} onClose {
+//					println(s"[startSimpleWebsocket] connection closed");
+//					ws = None
+//				}
+
+//				builder.options.maxFramePayloadLength = 2621440
+//
+//				builder.build()
 
 			val websocket = client.open()
 
@@ -94,7 +125,7 @@ object WsActor {
 		val subscribeJson = ujson.Obj(
 			"type"->ujson.Str("subscribe"),
 			"product_ids"-> ujson.Arr("BTC-USD"),
-			"channels"-> ujson.Arr(/*"level2","heartbeat",*/"ticker")
+			"channels"-> ujson.Arr("level2","heartbeat","ticker")
 		)
 		println("[generateJson] subscribe: " + ujson.write(subscribeJson))
 		ujson.write(subscribeJson)
